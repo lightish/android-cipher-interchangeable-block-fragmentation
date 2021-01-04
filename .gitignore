@@ -3,7 +3,7 @@
 .DS_Store
 .externalNativeBuild
 .idea/
-local.properties/
+local.properties
 build/
 captures/
 androidTest/
