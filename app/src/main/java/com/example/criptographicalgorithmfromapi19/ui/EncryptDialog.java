@@ -12,6 +12,7 @@ import android.support.v7.app.AppCompatDialogFragment;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.webkit.MimeTypeMap;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.Toast;
 
@@ -19,16 +20,13 @@ import com.example.criptographicalgorithmfromapi19.R;
 import com.example.criptographicalgorithmfromapi19.io.IOHelper;
 import com.example.criptographicalgorithmfromapi19.security.Encryptor;
 import com.example.criptographicalgorithmfromapi19.util.AlgUtils;
-
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
-
 import static com.example.criptographicalgorithmfromapi19.binary.ByteHelper.toByteArray;
 
 public class EncryptDialog extends AppCompatDialogFragment {
-
     @Override
     @NonNull
     public Dialog onCreateDialog(Bundle savedInstanceState) {
@@ -56,11 +54,13 @@ public class EncryptDialog extends AppCompatDialogFragment {
 
                         String fileName = getFileName(view);
                         int rounds = getRoundsNumber(view);
+                        boolean chained = getChainedCheck(view);
+                        int density = getEncryptionDensity(view);
 
                         if (rounds != -1) {
                             try {
                                 InputStream fileIS = context.getContentResolver().openInputStream(targetFileUri);
-                                onConfirm(fileIS, appFilePath, targetFileUri, fileName, rounds);
+                                onConfirm(fileIS, appFilePath, targetFileUri, fileName, rounds, chained, density);
 
                             } catch (FileNotFoundException e) {
                                 e.printStackTrace();
@@ -108,22 +108,54 @@ public class EncryptDialog extends AppCompatDialogFragment {
         return roundsNumber;
     }
 
+    private boolean getChainedCheck(View view) {
+        CheckBox chained = view.findViewById(R.id.chained);
+        return chained.isChecked();
+    }
+
+    private int getEncryptionDensity(View view) {
+        EditText density = view.findViewById(R.id.density);
+        String input = density.getText().toString().trim();
+        Integer densityInteger;
+
+        try {
+            densityInteger = Integer.decode(input);
+        } catch (NumberFormatException e) {
+            Toast.makeText(getContext(),
+                    "Couldn't parse density numeric value",
+                    Toast.LENGTH_SHORT).show();
+            return -1;
+        }
+
+        int densityNumber = densityInteger;
+        if (densityNumber < 1 || densityNumber > 255) {
+            Toast.makeText(getContext(),
+                    "Density value must be bigger then 0 and lower then 256",
+                    Toast.LENGTH_SHORT).show();
+            return -1;
+        }
+        return densityNumber;
+    }
+
     private void onConfirm(InputStream dataSource, File appFilePath,
-                           Uri targetFileUri, String fileName, int rounds) throws IOException {
+                           Uri targetFileUri, String fileName, int rounds,
+                           boolean chained, int encryptionDensity) throws IOException {
 
         Encryptor encryptor = new Encryptor();
         byte[] keyBin = makeKeyBin();
         if (fileName == null) {
-            Toast.makeText(getContext(), "File name is empty. Saved file as New Encrypted File", Toast.LENGTH_SHORT).show();
+            Toast.makeText(getContext(), "File name is empty. Saved file as New Encrypted File",
+                    Toast.LENGTH_SHORT).show();
             fileName = "New Encrypted File";
         }
         String fileExtension = getTargetFileExtension(targetFileUri);
 
-        encryptor.encrypt(dataSource, keyBin, rounds,
-                            appFilePath, fileName,
-                            fileExtension, (MainActivity) getActivity());
+        encryptor.encrypt(dataSource, keyBin, rounds, chained, encryptionDensity,
+                          appFilePath, fileName, fileExtension, (MainActivity) getActivity());
 
-        saveKey(keyBin, rounds, appFilePath, fileName);
+        int chainedDecimalRepr = chained ? 1 : 0;
+        saveKey(keyBin, (byte) rounds, (byte) chainedDecimalRepr, (byte) encryptionDensity,
+                appFilePath, fileName);
     }
 
     private byte[] makeKeyBin() {
@@ -132,22 +164,24 @@ public class EncryptDialog extends AppCompatDialogFragment {
         return keyBin;
     }
 
-    private void saveKey(byte[] keyBin, int rounds, File appFilePath, String fileName) {
+    private void saveKey(byte[] keyBin, byte rounds, byte chained, byte encryptionDensity,
+                         File appFilePath, String fileName) {
         byte[] keyByte = toByteArray(keyBin);
         IOHelper.save(getContext(), appFilePath, fileName + ".key",
-                keyByte, new byte[]{(byte) rounds});
+                keyByte, new byte[]{rounds, chained, encryptionDensity});
     }
 
     private String getTargetFileExtension(Uri targetFileUri) {
         String extension;
 
         if (targetFileUri.getScheme().equals(ContentResolver.SCHEME_CONTENT)) {
-            //If scheme is a content
+            // If scheme is a content
             final MimeTypeMap mime = MimeTypeMap.getSingleton();
             extension = mime.getExtensionFromMimeType(getContext().getContentResolver().getType(targetFileUri));
         } else {
-            //If scheme is a File
-            //This will replace white spaces with %20 and also other special characters. This will avoid returning null values on file name with spaces and special characters.
+            // If scheme is a File
+            // This will replace white spaces with %20 and also other special characters.
+            // This will avoid returning null values on file name with spaces and special characters.
             extension = MimeTypeMap.getFileExtensionFromUrl(Uri.fromFile(new File(targetFileUri.getPath())).toString());
         }
 

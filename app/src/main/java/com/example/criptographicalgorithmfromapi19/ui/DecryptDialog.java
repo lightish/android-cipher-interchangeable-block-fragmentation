@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.net.Uri;
 import android.os.Bundle;
+import android.support.annotation.NonNull;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatDialogFragment;
 import android.view.LayoutInflater;
@@ -24,8 +25,11 @@ import java.util.Arrays;
 
 public class DecryptDialog extends AppCompatDialogFragment {
     private int rounds;
+    private boolean chainedMode;
+    private int encryptionDensity;
 
     @Override
+    @NonNull
     public Dialog onCreateDialog(Bundle savedInstanceState) {
         AlertDialog.Builder builder = new AlertDialog.Builder(getActivity());
 
@@ -84,19 +88,18 @@ public class DecryptDialog extends AppCompatDialogFragment {
                            InputStream sourceBin) throws IOException {
 
         if (keyByte != null && keyByte.length != 0) {
-            byte[] keyBin = separateKeyFromRounds(keyByte);
-
+            byte[] keyBin = parseKey(keyByte);
             Decryptor decryptor = new Decryptor();
-            decryptor.decrypt(sourceBin, keyBin, rounds, appFilePath, fileName,
-                    (MainActivity) getActivity());
+            decryptor.decrypt(sourceBin, keyBin, rounds, chainedMode, encryptionDensity,
+                    appFilePath, fileName, (MainActivity) getActivity());
         }
     }
 
-    private byte[] separateKeyFromRounds(byte[] keyByte) {
+    private byte[] parseKey(byte[] keyByte) {
         rounds = keyByte[15];
-
-        byte[] keyBin = ByteHelper.toBitArray(Arrays.copyOf(keyByte, 15));
-
-        return keyBin;
+        byte chainedDecimalRepr = keyByte[16];
+        encryptionDensity = keyByte[17];
+        chainedMode = chainedDecimalRepr != 0;
+        return ByteHelper.toBitArray(Arrays.copyOf(keyByte, 15));
     }
 }

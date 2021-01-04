@@ -11,7 +11,7 @@
 
     <TextView
         android:id="@+id/curFileView"
-        android:text="File was not selected"
+        android:text="File is not selected"
         android:textAlignment="center"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

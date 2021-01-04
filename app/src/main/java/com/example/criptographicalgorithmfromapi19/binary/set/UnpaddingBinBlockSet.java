@@ -7,8 +7,8 @@ import java.io.InputStream;
 import java.util.Arrays;
 
 public class UnpaddingBinBlockSet extends BinBlockSet {
-    protected byte[] thisBlock;
-    protected byte[] nextBlock;
+    protected byte[] thisBlockBin;
+    protected byte[] nextBlockBytes;
     protected final int bytesTotal;
 
     public UnpaddingBinBlockSet(InputStream inputStream) throws IOException {
@@ -20,7 +20,7 @@ public class UnpaddingBinBlockSet extends BinBlockSet {
 
     @Override
     public boolean next() throws IOException {
-        thisBlock = ByteHelper.toBitArray(nextBlock);
+        thisBlockBin = ByteHelper.toBitArray(nextBlockBytes);
         int bytesRead = readNextBlock();
 
         return bytesRead == BLOCK_BYTE_LENGTH;
@@ -30,14 +30,14 @@ public class UnpaddingBinBlockSet extends BinBlockSet {
         byte[] bytes = new byte[BLOCK_BYTE_LENGTH];
         int bytesRead = stream.read(bytes, 0, BLOCK_BYTE_LENGTH);
         if (bytesRead > 0) {
-            nextBlock = bytes;
+            nextBlockBytes = bytes;
         }
         return bytesRead;
     }
 
     @Override
     public byte[] getBlock() {
-        return thisBlock;
+        return thisBlockBin;
     }
 
     @Override
@@ -53,21 +53,20 @@ public class UnpaddingBinBlockSet extends BinBlockSet {
     }
 
     public byte[] getLast() {
-        System.out.println("Last block: " + thisBlock);
-        return thisBlock;
+        return thisBlockBin;
     }
 
     public byte[] getRemainder() {
         trimRemainder();
-        return nextBlock;
+        return nextBlockBytes;
     }
 
     private void trimRemainder() {
         int lastNonZero = 0;
-        for (int i = 0; i < nextBlock.length; i++) {
-            if (nextBlock[i] != 0)
+        for (int i = 0; i < nextBlockBytes.length; i++) {
+            if (nextBlockBytes[i] != 0)
                 lastNonZero = i;
         }
-        nextBlock = Arrays.copyOfRange(nextBlock, 0, lastNonZero +1);
+        nextBlockBytes = Arrays.copyOfRange(nextBlockBytes, 0, lastNonZero +1);
     }
 }

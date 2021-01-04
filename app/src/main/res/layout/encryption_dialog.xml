@@ -19,5 +19,24 @@
         android:layout_below="@+id/file_name"
         android:layout_marginTop="10dp" />
 
+    <CheckBox
+        android:id="@+id/chained"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_below="@+id/rounds"
+        android:layout_marginTop="20dp"
+        android:text="Chained" />
+
+    <EditText
+        android:id="@+id/density"
+        android:hint="Encrypt every _ block"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_below="@+id/rounds"
+        android:layout_alignEnd="@+id/file_name"
+        android:layout_marginTop="20dp"
+        android:layout_marginEnd="0dp"
+        android:inputType="numberDecimal" />
+
 
 </RelativeLayout>

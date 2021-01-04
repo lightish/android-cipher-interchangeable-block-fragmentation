@@ -11,17 +11,16 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.Queue;
 import java.util.logging.Logger;
 
 public class Decryptor {
 
+    @Deprecated
     public void decrypt(InputStream source, byte[] keyBin, int rounds,
                         File destinationFolder, String fileName,
-                        MainActivity mainActivity) {
-
+                        MainActivity mainActivity) throws IOException {
         if (source != null) {
             Queue<Integer> progressCallbacks = new LinkedList<>();
 
@@ -30,31 +29,60 @@ public class Decryptor {
             Runnable progressTracker = new ProgressTracker(progressCallbacks, mainActivity,
                     "Decrypting file...", "File decrypted!");
 
-            Thread decryptionThread = new Thread(decryptionRunnable, "Decryption");
-            Thread trackingThread = new Thread(progressTracker, "Progress Tracker");
-            decryptionThread.start();
-            trackingThread.start();
+            startDecryption(decryptionRunnable, progressTracker);
         }
+    }
+
+    public void decrypt(InputStream source, byte[] keyBin, int rounds, boolean chained,
+                        int encryptionDensity, File destinationFolder, String fileName,
+                        MainActivity mainActivity) throws IOException {
+        if (source != null) {
+            Queue<Integer> progressCallbacks = new LinkedList<>();
+            Runnable progressTracker = new ProgressTracker(progressCallbacks, mainActivity,
+                    "Decrypting file...", "File decrypted!");
+
+            Runnable decryptionRunnable;
+            if (chained) {
+                decryptionRunnable = new ChainedDecryptionRunnable(source, rounds, keyBin,
+                        encryptionDensity, destinationFolder, fileName, progressCallbacks);
+            } else {
+                decryptionRunnable = new DecryptionRunnable(source, rounds, keyBin,
+                        destinationFolder, fileName, progressCallbacks);
+            }
+
+            startDecryption(decryptionRunnable, progressTracker);
+        }
+    }
+
+    public void startDecryption(Runnable decryptionRunnable,
+                                Runnable progressTracker) {
+        Thread decryptionThread = new Thread(decryptionRunnable, "Encryption");
+        Thread trackingThread = new Thread(progressTracker, "Progress Tracker");
+        decryptionThread.start();
+        trackingThread.start();
     }
 
     private static class DecryptionRunnable implements Runnable {
         protected Logger logger = Logger.getLogger("DECRYPT LOGGER -->>");
-        private InputStream source;
-        private int rounds;
-        private byte[] keyBin;
-        private File destinationFolder;
-        private String fileName;
-        private Queue<Integer> progressCallbacks;
+        protected InputStream source;
+        protected int rounds;
+        protected byte[] keyBin;
+        protected File destinationFolder;
+        protected String fileName;
+        protected Queue<Integer> progressCallbacks;
+        protected double minProgress;
+        protected UnpaddingBinBlockSet blockSet;
 
         public DecryptionRunnable(InputStream source, int rounds, byte[] keyBin,
                                   File destinationFolder, String fileName,
-                                  Queue<Integer> progressCallbacks) {
+                                  Queue<Integer> progressCallbacks) throws IOException {
             this.source = source;
             this.rounds = rounds;
             this.keyBin = keyBin;
             this.destinationFolder = destinationFolder;
             this.fileName = fileName;
             this.progressCallbacks = progressCallbacks;
+            this.blockSet = new UnpaddingBinBlockSet(source);
         }
 
         @Override
@@ -63,34 +91,11 @@ public class Decryptor {
             File file = new File(destinationFolder, fileName + ".tmp");
 
             try (FileOutputStream fileOut = new FileOutputStream(file)) {
-                byte[] block;
-                byte[] decryptedData;
-                byte[] bytesToWrite;
-                UnpaddingBinBlockSet blockSet = new UnpaddingBinBlockSet(source);
-                double progressIncrementation =
-                        AlgUtils.estimateProgressIncrPoint(blockSet.getBytesTotal());
-                double minProgress = 0;
-
-                while (blockSet.next()) {
-                    block = blockSet.getBlock();
-                    decryptedData = decryptBlock(block, keyBin, rounds);
-                    bytesToWrite = ByteHelper.toByteArray(decryptedData);
-                    fileOut.write(bytesToWrite);
-
-                    minProgress += progressIncrementation;
-                    if (minProgress >= 1) {
-                        progressCallbacks.add((int) minProgress);
-                        minProgress -= Math.floor(minProgress);
-                    }
-                }
-                decryptLastBlock(blockSet, keyBin, rounds, fileOut);
-
-                String extension = new String(blockSet.getRemainder());
-                logger.info("extension bytes: " + Arrays.toString(blockSet.getRemainder()));
-                logger.info("extension actual: ." + extension);
-                File newFile = new File(destinationFolder, fileName + "." + extension);
-                logger.info("file renamed: " + file.renameTo(newFile));
-                logger.info(newFile.getAbsolutePath() + " is decrypted and saved");
+                double progressIncrementation;
+                progressIncrementation = AlgUtils.estimateProgressIncrPoint(blockSet.getBytesTotal());
+                minProgress = 0;
+                writeDecryptedFile(fileOut, progressIncrementation);
+                finalizeFileName(file);
             } catch (IOException ioe) {
                 ioe.printStackTrace();
             } finally {
@@ -105,7 +110,51 @@ public class Decryptor {
             }
         }
 
-        private byte[] decryptBlock(byte[] block, byte[] key, int rounds) {
+        protected void writeDecryptedFile(FileOutputStream fileOut,
+                                          double progressIncrementation) throws IOException {
+            while (blockSet.next()) {
+                writeDecryptedBlock(blockSet.getBlock(), fileOut, progressIncrementation);
+            }
+            byte[] lastBlock = decryptLastBlock(blockSet.getLast());
+            writeBinBlock(lastBlock, fileOut, progressIncrementation);
+        }
+
+        protected void finalizeFileName(File file) {
+            String extension = new String(blockSet.getRemainder());
+            File newFile = new File(destinationFolder, fileName + "." + extension);
+            boolean fileRenamed = file.renameTo(newFile);
+            if (!fileRenamed) {
+                logger.warning("Couldn't rename the file to " + newFile.getName() +
+                        "\nNew absolute path requested: " + newFile.getAbsolutePath());
+            }
+            logger.info(file.getAbsolutePath() + " is decrypted and saved");
+        }
+
+        protected void writeDecryptedBlock(byte[] block,
+                                             FileOutputStream fileOut,
+                                             double progressIncrementation) throws IOException {
+            byte[] decryptedBlock = decryptBlock(block, keyBin, rounds);
+            writeBinBlock(decryptedBlock, fileOut, progressIncrementation);
+        }
+
+        protected void writeBinBlock(byte[] block,
+                                     OutputStream fileOut,
+                                     double progressIncrementation) throws IOException {
+            byte[] bytesToWrite = ByteHelper.toByteArray(block);
+            fileOut.write(bytesToWrite);
+            reportProgress(progressIncrementation);
+        }
+
+        protected void reportProgress(double progressIncrementation) {
+            minProgress += progressIncrementation;
+            if (minProgress >= 1) {
+                int progressToReport = (int) minProgress;
+                progressCallbacks.add(progressToReport);
+                minProgress -= progressToReport;
+            }
+        }
+
+        protected byte[] decryptBlock(byte[] block, byte[] key, int rounds) {
             byte[] left = new byte[AlgUtils.MAIN_BLOCKS_WIDTH];
             byte[] right = new byte[AlgUtils.MAIN_BLOCKS_WIDTH];
 
@@ -133,15 +182,9 @@ public class Decryptor {
             return AlgUtils.performReverseSBlockPermutation(newRight, AlgUtils.S2, 5);
         }
 
-        private void decryptLastBlock(UnpaddingBinBlockSet blockSet,
-                                      byte[] key, int rounds,
-                                      OutputStream fileOut) throws IOException {
-
-            byte[] block = blockSet.getLast();
-            byte[] decryptedData = decryptBlock(block, key, rounds);
-            decryptedData = unpadBlock(decryptedData, 8);
-            byte[] bytesToWrite = ByteHelper.toByteArray(decryptedData);
-            fileOut.write(bytesToWrite);
+        protected byte[] decryptLastBlock(byte[] block) {
+            byte[] decryptedData = decryptBlock(block, keyBin, rounds);
+            return unpadBlock(decryptedData, 8);
         }
 
         byte[] unpadBlock(byte[] block, int paddingDigits) {
@@ -150,6 +193,57 @@ public class Decryptor {
             System.arraycopy(block, 0, unpaddedBlock, 0, unpaddedBlock.length);
             return unpaddedBlock;
         }
-    }
+    }   // DecryptionRunnable inner class end
+
+    private static class ChainedDecryptionRunnable extends DecryptionRunnable {
+        protected int encryptionDensity;
+
+        ChainedDecryptionRunnable(InputStream source, int rounds, byte[] keyBin, int encryptionDensity,
+                                  File destinationFolder, String fileName,
+                                  Queue<Integer> progressCallbacks) throws IOException {
+            super(source, rounds, keyBin, destinationFolder, fileName, progressCallbacks);
+            this.encryptionDensity = encryptionDensity;
+        }
+
+        @Override
+        protected void writeDecryptedFile(FileOutputStream fileOut,
+                                          double progressIncrementation) throws IOException {
+            byte[] prevBlock;
+            int blocksUntilEncrypted = encryptionDensity;
+
+            if (blockSet.next()) {
+                byte[] encryptedBlock = blockSet.getBlock();
+                writeDecryptedBlock(encryptedBlock, fileOut, progressIncrementation);
+                prevBlock = encryptedBlock;
+
+                while (blockSet.next()) {
+                    byte[] boundBlock;
+
+                    encryptedBlock = blockSet.getBlock();
+                    if (blocksUntilEncrypted == 1) {
+                        boundBlock = decryptBlock(encryptedBlock, keyBin, rounds);
+                        blocksUntilEncrypted = encryptionDensity;
+                    } else {
+                        boundBlock = encryptedBlock;
+                        blocksUntilEncrypted--;
+                    }
+
+                    byte[] plaintextBlock = AlgUtils.xorArrays(boundBlock, prevBlock);
+                    writeBinBlock(plaintextBlock, fileOut, progressIncrementation);
+                    prevBlock = encryptedBlock;
+                }
+                byte[] lastBlock = blockSet.getLast();
+                byte[] boundBlock;
+                if (blocksUntilEncrypted == 1) {
+                    boundBlock = decryptBlock(lastBlock, keyBin, rounds);
+                } else {
+                    boundBlock = lastBlock;
+                }
+                byte[] plaintextPaddedBlock = AlgUtils.xorArrays(boundBlock, prevBlock);
+                byte[] plaintextBlock = unpadBlock(plaintextPaddedBlock, 8);
+                writeBinBlock(plaintextBlock, fileOut, progressIncrementation);
+            }
+        }
+    }   // ChainedDecryptionRunnable inner class end
 
 }   // Decryptor class end
